@@ -6,33 +6,33 @@
 [[ -f /etc/redhat-release ]] && unalias -a
 
 #######color code########
-RED="31m"      
-GREEN="32m"  
-YELLOW="33m" 
-BLUE="36m"
-FUCHSIA="35m"
+red="31m"      
+green="32m"  
+yellow="33m" 
+blue="36m"
+fuchsia="35m"
 
-GOOGLE_URLS=(
+google_urls=(
     packages.cloud.google.com
     k8s.gcr.io
+    gcr.io
 )
 
-CAN_GOOGLE=1
+mirror_source="registry.cn-hangzhou.aliyuncs.com/google_containers"
 
-IS_MASTER=0
+can_google=1
 
-HELM=0
+is_master=0
 
-NETWORK=""
+network=""
 
-K8S_VERSION=""
+k8s_version=""
 
-colorEcho(){
-    COLOR=$1
-    echo -e "\033[${COLOR}${@:2}\033[0m"
+color_echo(){
+    echo -e "\033[$1${@:2}\033[0m"
 }
 
-ipIsConnect(){
+ip_is_connect(){
     ping -c2 -i0.3 -W1 $1 &>/dev/null
     if [ $? -eq 0 ];then
         return 0
@@ -41,55 +41,54 @@ ipIsConnect(){
     fi
 }
 
-runCommand(){
+run_command(){
     echo ""
-    COMMAND=$1
-    colorEcho $GREEN $1
-    eval $1
+    local command=$1
+    echo -e "\033[32m$command\033[0m"
+    echo $command|bash
 }
 
-setHostname(){
-    local HOSTNAME=$1
-    if [[ $HOSTNAME =~ '_' ]];then
-        colorEcho $YELLOW "hostname can't contain '_' character, auto change to '-'.."
-        HOSTNAME=`echo $HOSTNAME|sed 's/_/-/g'`
+set_hostname(){
+    local hostname=$1
+    if [[ $hostname =~ '_' ]];then
+        color_echo $yellow "hostname can't contain '_' character, auto change to '-'.."
+        hostname=`echo $hostname|sed 's/_/-/g'`
     fi
-    echo "set hostname: `colorEcho $BLUE $HOSTNAME`"
-    echo "127.0.0.1 $HOSTNAME" >> /etc/hosts
-    runCommand "hostnamectl --static set-hostname $HOSTNAME"
+    echo "set hostname: `color_echo $blue $hostname`"
+    echo "127.0.0.1 $hostname" >> /etc/hosts
+    run_command "hostnamectl --static set-hostname $hostname"
 }
 
 #######get params#########
 while [[ $# > 0 ]];do
-    KEY="$1"
-    case $KEY in
+    case "$1" in
         --hostname)
-        setHostname $2
+        set_hostname $2
+        shift
+        ;;
+        -v|--version)
+        k8s_version=`echo "$2"|sed 's/v//g'`
+        echo "prepare install k8s version: $(color_echo $green $k8s_version)"
         shift
         ;;
         --flannel)
         echo "use flannel network, and set this node as master"
-        NETWORK="flannel"
-        IS_MASTER=1
+        network="flannel"
+        is_master=1
         ;;
         --calico)
         echo "use calico network, and set this node as master"
-        NETWORK="calico"
-        IS_MASTER=1
-        ;;
-        --helm)
-        echo "install Helm, and set this node as maste"
-        HELM=1
-        IS_MASTER=1
+        network="calico"
+        is_master=1
         ;;
         -h|--help)
-        echo "Usage: $0 [OPTIONS]"
+        echo "Usage: $0 [options]"
         echo "Options:"
         echo "   --flannel                    use flannel network, and set this node as master"
         echo "   --calico                     use calico network, and set this node as master"
-        echo "   --helm                       install helm, and set this node as master"
-        echo "   --hostname [HOSTNAME]        set hostname"
-        echo "   -h, --help:                          find help"
+        echo "   --hostname [hostname]        set hostname"
+        echo "   -v, --version [version]:     install special version k8s"
+        echo "   -h, --help:                  find help"
         echo ""
         exit 0
         shift # past argument
@@ -102,62 +101,156 @@ while [[ $# > 0 ]];do
 done
 #############################
 
-checkSys() {
+check_sys() {
     #检查是否为Root
-    [ $(id -u) != "0" ] && { colorEcho ${RED} "Error: You must be root to run this script"; exit 1; }
+    [ $(id -u) != "0" ] && { color_echo ${red} "Error: You must be root to run this script"; exit 1; }
 
     #检查CPU核数
-    [[ `cat /proc/cpuinfo |grep "processor"|wc -l` == 1 && $IS_MASTER == 1 ]] && { colorEcho ${RED} "master node cpu number should be >= 2!"; exit 1;}
+    [[ `cat /proc/cpuinfo |grep "processor"|wc -l` == 1 && $is_master == 1 ]] && { color_echo ${red} "master node cpu number should be >= 2!"; exit 1;}
 
     #检查系统信息
     if [[ -e /etc/redhat-release ]];then
         if [[ $(cat /etc/redhat-release | grep Fedora) ]];then
-            OS='Fedora'
-            PACKAGE_MANAGER='dnf'
+            os='Fedora'
+            package_manager='dnf'
         else
-            OS='CentOS'
-            PACKAGE_MANAGER='yum'
+            os='CentOS'
+            package_manager='yum'
         fi
     elif [[ $(cat /etc/issue | grep Debian) ]];then
-        OS='Debian'
-        PACKAGE_MANAGER='apt-get'
+        os='Debian'
+        package_manager='apt-get'
     elif [[ $(cat /etc/issue | grep Ubuntu) ]];then
-        OS='Ubuntu'
-        PACKAGE_MANAGER='apt-get'
+        os='Ubuntu'
+        package_manager='apt-get'
     else
-        colorEcho ${RED} "Not support OS, Please reinstall OS and retry!"
+        color_echo ${red} "Not support os, Please reinstall os and retry!"
         exit 1
     fi
 
-    [[ `cat /etc/hostname` =~ '_' ]] && setHostname `cat /etc/hostname`
+    [[ `cat /etc/hostname` =~ '_' ]] && set_hostname `cat /etc/hostname`
 
     echo "Checking machine network(access google)..."
-    for ((i=0;i<${#GOOGLE_URLS[*]};i++))
+    for ((i=0;i<${#google_urls[*]};i++))
     do
-        ipIsConnect ${GOOGLE_URLS[$i]}
+        ip_is_connect ${google_urls[$i]}
         if [[ ! $? -eq 0 ]]; then
-            colorEcho ${YELLOW} "server can't access google source, switch to chinese source(aliyun).."
-            CAN_GOOGLE=0
+            color_echo ${yellow} "server can't access google source, switch to chinese source(aliyun).."
+            can_google=0
             break	
         fi
     done
-
 }
 
 #安装依赖
-installDependent(){
-    if [[ ${OS} == 'CentOS' || ${OS} == 'Fedora' ]];then
-        ${PACKAGE_MANAGER} install bash-completion -y
+install_dependent(){
+    if [[ ${os} == 'CentOS' || ${os} == 'Fedora' ]];then
+        ${package_manager} install bash-completion -y
     else
-        ${PACKAGE_MANAGER} update
-        ${PACKAGE_MANAGER} install dirmngr -y
-        ${PACKAGE_MANAGER} install bash-completion apt-transport-https gpg gpg-agent -y
+        ${package_manager} update
+        ${package_manager} install bash-completion apt-transport-https -y
     fi
 }
 
-prepareWork() {
+setup_docker(){
+    ## 修改cgroupdriver
+    if [[ ! -e /etc/docker/daemon.json || -z `cat /etc/docker/daemon.json|grep systemd` ]];then
+        ## see https://kubernetes.io/docs/setup/production-environment/container-runtimes/
+        mkdir -p /etc/docker
+        if [[ ${os} == 'CentOS' || ${os} == 'Fedora' ]];then
+            if [[ $can_google == 1 ]];then
+                cat > /etc/docker/daemon.json <<EOF
+{
+    "exec-opts": ["native.cgroupdriver=systemd"],
+    "log-driver": "json-file",
+    "log-opts": {
+        "max-size": "100m"
+    },
+    "storage-driver": "overlay2",
+    "storage-opts": [
+        "overlay2.override_kernel_check=true"
+    ]
+}
+EOF
+            else
+                cat > /etc/docker/daemon.json <<EOF
+{
+    "exec-opts": ["native.cgroupdriver=systemd"],
+    "log-driver": "json-file",
+    "log-opts": {
+        "max-size": "100m"
+    },
+    "storage-driver": "overlay2",
+    "storage-opts": [
+        "overlay2.override_kernel_check=true"
+    ],
+    "registry-mirrors": [
+        "https://mirror.ccs.tencentyun.com",
+        "https://docker.mirrors.ustc.edu.cn",
+        "https://registry.docker-cn.com"
+    ]
+}
+EOF
+            fi
+        else
+            if [[ $can_google == 1 ]];then
+                cat > /etc/docker/daemon.json <<EOF
+{
+    "exec-opts": ["native.cgroupdriver=systemd"],
+    "log-driver": "json-file",
+    "log-opts": {
+        "max-size": "100m"
+    },
+    "storage-driver": "overlay2"
+}
+EOF
+            else
+                cat > /etc/docker/daemon.json <<EOF
+{
+    "exec-opts": ["native.cgroupdriver=systemd"],
+    "log-driver": "json-file",
+    "log-opts": {
+        "max-size": "100m"
+    },
+    "storage-driver": "overlay2",
+    "registry-mirrors": [
+        "https://mirror.ccs.tencentyun.com",
+        "https://docker.mirrors.ustc.edu.cn",
+        "https://registry.docker-cn.com"
+    ]
+}
+EOF
+            fi
+        fi
+        systemctl restart docker
+        if [ $? -ne 0 ];then
+            rm -f /etc/docker/daemon.json
+            if [[ $can_google == 0 ]];then
+                cat > /etc/docker/daemon.json <<EOF
+{
+    "registry-mirrors": [
+        "https://mirror.ccs.tencentyun.com",
+        "https://docker.mirrors.ustc.edu.cn",
+        "https://registry.docker-cn.com"
+    ]
+}
+EOF
+            fi
+            systemctl restart docker
+        fi
+    fi
+}
+
+setup_containerd() {
+    containerd config default > /etc/containerd/config.toml
+    sed -i 's/SystemdCgroup = false/SystemdCgroup = true/g' /etc/containerd/config.toml
+    systemctl restart containerd
+    systemctl enable containerd
+}
+
+prepare_work() {
     ## Centos设置
-    if [[ ${OS} == 'CentOS' || ${OS} == 'Fedora' ]];then
+    if [[ ${os} == 'CentOS' || ${os} == 'Fedora' ]];then
         if [[ `systemctl list-units --type=service|grep firewalld` ]];then
             systemctl disable firewalld.service
             systemctl stop firewalld.service
@@ -179,147 +272,38 @@ EOF
 
     ## 安装最新版docker
     if [[ ! $(type docker 2>/dev/null) ]];then
-        colorEcho ${YELLOW} "docker no install, auto install latest docker..."
-        while :
-        do
-            if [[ $CAN_GOOGLE == 1 ]];then
-                sh <(curl -sL https://get.docker.com)
-            else
-                sh <(curl -sL https://get.docker.com) --mirror Aliyun
-            fi
-            if [[ $(type docker 2>/dev/null) ]];then
-                break
-            else
-                export CHANNEL=test
-                colorEcho ${YELLOW} "stable channel docker can't install, auto install test channel docker..."
-            fi
-        done
-        systemctl enable docker
-        systemctl start docker
+        color_echo ${yellow} "docker no install, auto install latest docker..."
+        source <(curl -sL https://docker-install.netlify.app/install.sh) -s
     fi
 
-    ## 修改cgroupdriver
-    if [[ ! -e /etc/docker/daemon.json || -z `cat /etc/docker/daemon.json|grep systemd` ]];then
-        ## see https://kubernetes.io/docs/setup/production-environment/container-runtimes/
-        mkdir -p /etc/docker
-        if [[ ${OS} == 'CentOS' || ${OS} == 'Fedora' ]];then
-            if [[ $CAN_GOOGLE == 1 ]];then
-                cat > /etc/docker/daemon.json <<EOF
-{
-    "exec-opts": ["native.cgroupdriver=systemd"],
-    "log-driver": "json-file",
-    "log-opts": {
-        "max-size": "100m"
-    },
-    "storage-driver": "overlay2",
-    "storage-opts": [
-        "overlay2.override_kernel_check=true"
-    ]
-}
-EOF
-            else
-                cat > /etc/docker/daemon.json <<EOF
-{
-    "exec-opts": ["native.cgroupdriver=systemd"],
-    "log-driver": "json-file",
-    "log-opts": {
-        "max-size": "100m"
-    },
-    "storage-driver": "overlay2",
-    "storage-opts": [
-        "overlay2.override_kernel_check=true"
-    ],
-    "registry-mirrors": [
-        "https://docker.mirrors.ustc.edu.cn/"
-    ]
-}
-EOF
-            fi
-        else
-            if [[ $CAN_GOOGLE == 1 ]];then
-                cat > /etc/docker/daemon.json <<EOF
-{
-    "exec-opts": ["native.cgroupdriver=systemd"],
-    "log-driver": "json-file",
-    "log-opts": {
-        "max-size": "100m"
-    },
-    "storage-driver": "overlay2"
-}
-EOF
-            else
-                cat > /etc/docker/daemon.json <<EOF
-{
-    "exec-opts": ["native.cgroupdriver=systemd"],
-    "log-driver": "json-file",
-    "log-opts": {
-        "max-size": "100m"
-    },
-    "storage-driver": "overlay2",
-    "registry-mirrors": [
-        "https://docker.mirrors.ustc.edu.cn/"
-    ]
-}
-EOF
-            fi
-        fi
-        systemctl restart docker
-        if [ $? -ne 0 ];then
-            rm -f /etc/docker/daemon.json
-            if [[ $CAN_GOOGLE == 0 ]];then
-                cat > /etc/docker/daemon.json <<EOF
-{
-    "registry-mirrors": [
-        "http://docker.mirrors.ustc.edu.cn"
-    ],
-    "insecure-registries" : [
-        "docker.mirrors.ustc.edu.cn"
-    ]
-}
-EOF
-            fi
-            systemctl restart docker
-        fi
-    fi
+    setup_docker
+
+    setup_containerd
 }
 
-installK8sBase() {
-    if [[ $CAN_GOOGLE == 1 ]];then
-        if [[ $OS == 'Fedora' || $OS == 'CentOS' ]];then
-            cat <<EOF > /etc/yum.repos.d/kubernetes.repo
-[kubernetes]
-name=Kubernetes
-baseurl=https://packages.cloud.google.com/yum/repos/kubernetes-el7-x86_64
-enabled=1
-gpgcheck=1
-repo_gpgcheck=1
-gpgkey=https://packages.cloud.google.com/yum/doc/yum-key.gpg https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg
-EOF
-            yum install -y kubelet kubeadm kubectl
-        else
-            curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | apt-key add -
-            echo "deb https://apt.kubernetes.io/ kubernetes-xenial main" | tee -a /etc/apt/sources.list.d/kubernetes.list
-            apt-get update
-            apt-get install -y kubelet kubeadm kubectl
-        fi
-    else
-        if [[ $OS == 'Fedora' || $OS == 'CentOS' ]];then
-            cat>>/etc/yum.repos.d/kubrenetes.repo<<EOF
+install_k8s_base() {
+    if [[ $os == 'Fedora' || $os == 'CentOS' ]];then
+        cat>>/etc/yum.repos.d/kubrenetes.repo<<EOF
 [kubernetes]
 name=Kubernetes Repo
 baseurl=https://mirrors.aliyun.com/kubernetes/yum/repos/kubernetes-el7-x86_64/
 gpgcheck=0
 gpgkey=https://mirrors.aliyun.com/kubernetes/yum/doc/yum-key.gpg
 EOF
-            yum install -y kubelet kubeadm kubectl
+    else
+        curl -s https://mirrors.aliyun.com/kubernetes/apt/doc/apt-key.gpg | apt-key add -
+        echo "deb https://mirrors.aliyun.com/kubernetes/apt kubernetes-xenial main" | tee /etc/apt/sources.list.d/kubernetes.list
+        ${package_manager} update
+    fi
+
+    if [[ -z $k8s_version ]];then
+        ${package_manager} install -y kubelet kubeadm kubectl
+    else
+        if [[ $package_manager == "apt-get" ]];then
+            install_version=`apt-cache madison kubectl|grep $k8s_version|cut -d \| -f 2|sed 's/ //g'`
+            ${package_manager} install -y kubelet=$install_version kubeadm=$install_version kubectl=$install_version
         else
-            cat <<EOF > /etc/apt/sources.list.d/kubernetes.list
-deb https://mirrors.aliyun.com/kubernetes/apt kubernetes-xenial main
-EOF
-            gpg --keyserver keyserver.ubuntu.com --recv-keys BA07F4FB
-            gpg --export --armor BA07F4FB | apt-key add -
-            apt-get update
-            apt-get install -y kubelet kubeadm kubectl
+            ${package_manager} install -y kubelet-$k8s_version kubeadm-$k8s_version kubectl-$k8s_version
         fi
     fi
     systemctl enable kubelet && systemctl start kubelet
@@ -328,70 +312,89 @@ EOF
     [[ -z $(grep kubectl ~/.bashrc) ]] && echo "source <(kubectl completion bash)" >> ~/.bashrc
     [[ -z $(grep kubeadm ~/.bashrc) ]] && echo "source <(kubeadm completion bash)" >> ~/.bashrc
     source ~/.bashrc
-    K8S_VERSION=$(kubectl version --short=true|awk 'NR==1{print $3}')
-    echo "k8s version: $(colorEcho $GREEN $K8S_VERSION)"
+    k8s_version=$(kubectl version --output=yaml|grep gitVersion|awk 'NR==1{print $2}')
+    k8s_minor_version=`kubectl version --output=yaml|grep minor|head -n 1|tr -cd '[0-9]'`
+    echo "k8s version: $(color_echo $green $k8s_version)"
 }
 
-downloadImages() {
-    if [[ $CAN_GOOGLE == 0 ]];then
-        colorEcho $YELLOW "auto download $K8S_VERSION all k8s.gcr.io images..."
-        K8S_IMAGES=(`kubeadm config images list 2>/dev/null|grep 'k8s.gcr.io'|xargs -r`)
-        for IMAGE in ${K8S_IMAGES[@]}
-        do
-            TEMP_NAME=${IMAGE#*/}
-            if [[ $TEMP_NAME =~ "coredns" ]];then
-                MIRROR_NAME="coredns/"$TEMP_NAME
-            else
-                MIRROR_NAME="mirrorgooglecontainers/"$TEMP_NAME
+download_images() {
+    color_echo $yellow "auto download $k8s_version all k8s.gcr.io images..."
+    pause_version=`cat /etc/containerd/config.toml|grep k8s.gcr.io/pause|grep -Po '\d\.\d'`
+    k8s_images=(`kubeadm config images list 2>/dev/null|grep 'k8s.gcr.io'|xargs -r` "k8s.gcr.io/pause:$pause_version")
+    for image in ${k8s_images[@]}
+    do
+        if [ $k8s_minor_version -ge 24 ];then
+            if [[ `ctr -n k8s.io i ls -q|grep -w $image` ]];then
+                echo " already download image: $(color_echo $green $image)"
+                continue
             fi
-            docker pull $MIRROR_NAME
-            docker tag $MIRROR_NAME $IMAGE
-            docker rmi $MIRROR_NAME
-            echo "Downloaded image: $(colorEcho $GREEN $IMAGE)"
-            echo ""
-        done
-    fi
+        else
+            if [[ `docker images $image|awk 'NR!=1'` ]];then
+                echo " already download image: $(color_echo $green $image)"
+                continue
+            fi
+        fi
+        if [[ $can_google == 0 ]];then
+            core_name=${image#*/}
+            if [[ $core_name =~ "coredns" ]];then
+                mirror_name="$mirror_source/coredns:`echo $core_name|egrep -o "[0-9.]+"`"
+            else
+                mirror_name="$mirror_source/$core_name"
+            fi
+            if [ $k8s_minor_version -ge 24 ];then
+                ctr -n k8s.io i pull $mirror_name
+                ctr -n k8s.io i tag $mirror_name $image
+                ctr -n k8s.io i del $mirror_name
+            else
+                docker pull $mirror_name
+                docker tag $mirror_name $image
+                docker rmi $mirror_name
+            fi
+        else
+            [ $k8s_minor_version -ge 24 ] && ctr -n k8s.io i pull $image || docker pull $image
+        fi
+
+        if [ $? -eq 0 ];then
+            echo "Downloaded image: $(color_echo $blue $image)"
+        else
+            echo "Failed download image: $(color_echo $red $image)"
+        fi
+        echo ""
+    done
 }
 
-runK8s(){
-    if [[ $IS_MASTER == 1 ]];then
-        if [[ $NETWORK == "flannel" ]];then
-            runCommand "kubeadm init --pod-network-cidr=10.244.0.0/16 --kubernetes-version=`echo $K8S_VERSION|sed "s/v//g"`"
-            runCommand "mkdir -p $HOME/.kube"
-            runCommand "cp -i /etc/kubernetes/admin.conf $HOME/.kube/config"
-            runCommand "chown $(id -u):$(id -g) $HOME/.kube/config"
-            runCommand "kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml"
-        elif [[ $NETWORK == "calico" ]];then
-            runCommand "kubeadm init --pod-network-cidr=192.168.0.0/16 --kubernetes-version=`echo $K8S_VERSION|sed "s/v//g"`"
-            runCommand "mkdir -p $HOME/.kube"
-            runCommand "cp -i /etc/kubernetes/admin.conf $HOME/.kube/config"
-            runCommand "chown $(id -u):$(id -g) $HOME/.kube/config"
-            CALIO_VERSION=$(curl -s https://docs.projectcalico.org/latest/getting-started/|grep Click|egrep 'v[0-9].[0-9]' -o)
-            runCommand "kubectl apply -f https://docs.projectcalico.org/$CALIO_VERSION/manifests/calico.yaml"
+run_k8s(){
+    if [[ $is_master == 1 ]];then
+        if [[ $network == "flannel" ]];then
+            run_command "kubeadm init --pod-network-cidr=10.244.0.0/16 --kubernetes-version=`echo $k8s_version|sed "s/v//g"`"
+            run_command "mkdir -p $HOME/.kube"
+            run_command "cp -i /etc/kubernetes/admin.conf $HOME/.kube/config"
+            run_command "chown $(id -u):$(id -g) $HOME/.kube/config"
+            run_command "kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml"
+        elif [[ $network == "calico" ]];then
+            run_command "kubeadm init --pod-network-cidr=192.168.0.0/16 --kubernetes-version=`echo $k8s_version|sed "s/v//g"`"
+            run_command "mkdir -p $HOME/.kube"
+            run_command "cp -i /etc/kubernetes/admin.conf $HOME/.kube/config"
+            run_command "chown $(id -u):$(id -g) $HOME/.kube/config"
+            run_command "kubectl apply -f https://docs.projectcalico.org/manifests/calico.yaml"
         fi
     else
-        echo "this node is slave, please manual run 'kubeadm join' command. if forget join command, please run `colorEcho $GREEN "kubeadm token create --print-join-command"` in master node"
+        echo "this node is slave, please manual run 'kubeadm join' command. if forget join command, please run `color_echo $green "kubeadm token create --print-join-command"` in master node"
     fi
-    colorEcho $YELLOW "kubectl and kubeadm command completion must reopen ssh to affect!"
-}
-
-installHelm(){
-    if [[ $IS_MASTER == 1 && $HELM == 1 ]];then
-        curl -L https://git.io/get_helm.sh | bash
-        helm init
-        #命令行补全
-        [[ -z $(grep helm ~/.bashrc) ]] && { echo "source <(helm completion bash)" >> ~/.bashrc; source ~/.bashrc; }
+    if [[ `command -v crictl` ]];then
+        crictl config --set runtime-endpoint=unix:///run/containerd/containerd.sock
+        [[ -z $(grep crictl ~/.bashrc) ]] && echo "source <(crictl completion bash)" >> ~/.bashrc
     fi
+    color_echo $yellow "kubectl and kubeadm command completion must reopen ssh to affect!"
 }
 
 main() {
-    checkSys
-    prepareWork
-    installDependent
-    installK8sBase
-    downloadImages
-    runK8s
-    installHelm
+    check_sys
+    prepare_work
+    install_dependent
+    install_k8s_base
+    download_images
+    run_k8s
 }
 
 main
