@@ -136,7 +136,7 @@ check_sys() {
         ip_is_connect ${google_urls[$i]}
         if [[ ! $? -eq 0 ]]; then
             color_echo ${yellow} "server can't access google source, switch to chinese source(aliyun).."
-            can_google=0
+            can_google=1
             break	
         fi
     done
@@ -291,8 +291,8 @@ gpgcheck=0
 gpgkey=https://mirrors.aliyun.com/kubernetes/yum/doc/yum-key.gpg
 EOF
     else
-        curl -fsSLo /usr/share/keyrings/kubernetes-archive-keyring.gpg https://packages.cloud.google.com/apt/doc/apt-key.gpg
-        echo "deb [signed-by=/usr/share/keyrings/kubernetes-archive-keyring.gpg] https://apt.kubernetes.io/ kubernetes-xenial main" | sudo tee /etc/apt/sources.list.d/kubernetes.list
+        curl -s https://mirrors.aliyun.com/kubernetes/apt/doc/apt-key.gpg | apt-key add -
+        echo "deb https://mirrors.aliyun.com/kubernetes/apt kubernetes-xenial main" | tee /etc/apt/sources.list.d/kubernetes.list
         ${package_manager} update
     fi
 
