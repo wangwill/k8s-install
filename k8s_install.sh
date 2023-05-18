@@ -14,7 +14,7 @@ fuchsia="35m"
 
 google_urls=(
     packages.cloud.google.com
-    k8s.gcr.io
+    registry.k8s.io
     gcr.io
 )
 
@@ -318,9 +318,9 @@ EOF
 }
 
 download_images() {
-    color_echo $yellow "auto download $k8s_version all k8s.gcr.io images..."
-    pause_version=`cat /etc/containerd/config.toml|grep k8s.gcr.io/pause|grep -Po '\d\.\d'`
-    k8s_images=(`kubeadm config images list 2>/dev/null|grep 'k8s.gcr.io'|xargs -r` "k8s.gcr.io/pause:$pause_version")
+    color_echo $yellow "auto download $k8s_version all registry.k8s.io images..."
+    pause_version=`cat /etc/containerd/config.toml|grep registry.k8s.io/pause|grep -Po '\d\.\d'`
+    k8s_images=(`kubeadm config images list 2>/dev/null|grep 'registry.k8s.io'|xargs -r` "registry.k8s.io/pause:$pause_version")
     for image in ${k8s_images[@]}
     do
         if [ $k8s_minor_version -ge 24 ];then
