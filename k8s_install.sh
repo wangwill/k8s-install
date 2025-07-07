@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Author: Jrohy (modified)
+# Author: Sequoia Will
 # Description: Simplified Kubernetes installation script using only Google sources (v1.33+)
 
 set -euo pipefail
@@ -171,13 +171,15 @@ install_k8s() {
         run_command "${pkg_mgr} update"
         run_command "${pkg_mgr} install -y kubelet=${k8s_version}-* kubeadm=${k8s_version}-* kubectl=${k8s_version}-*"
         run_command "apt-mark hold kubelet kubeadm kubectl"
+        systemctl enable --now kubelet
     else
+        run_command "curl -fsSL https://pkgs.k8s.io/core:/stable:/v${k8s_version%.*}/rpm/repodata/repomd.xml.key | gpg --dearmor -o /etc/yum.repos.d/kubernetes-rpm-keyring.gpg"
         cat <<EOF > /etc/yum.repos.d/kubernetes.repo
 [kubernetes]
 name=Kubernetes Repo
-baseurl=https://packages.cloud.google.com/yum/repos/kubernetes-el7-x86_64/
+baseurl=https://pkgs.k8s.io/core:/stable:/v${k8s_version%.*}/rpm/
 gpgcheck=1
-gpgkey=https://packages.cloud.google.com/yum/doc/yum-key.gpg
+gpgkey=file:///etc/yum.repos.d/kubernetes-rpm-keyring.gpg
 EOF
         run_command "${pkg_mgr} install -y kubelet-$k8s_version kubeadm-$k8s_version kubectl-$k8s_version"
         systemctl enable --now kubelet
@@ -205,9 +207,11 @@ run_k8s() {
         [[ $network == "flannel" ]] && init_cmd+=" --pod-network-cidr=10.244.0.0/16"
         [[ $network == "calico" ]]  && init_cmd+=" --pod-network-cidr=192.168.0.0/16"
         run_command "$init_cmd"
-        run_command "mkdir -p \$HOME/.kube && cp -i /etc/kubernetes/admin.conf \$HOME/.kube/config && chown \$(id -u):\$(id -g) \$HOME/.kube/config"
+        mkdir -p $HOME/.kube
+        cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+        chown $(id -u):$(id -g) $HOME/.kube/config
         if [[ $network == "flannel" ]]; then
-            run_command "kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml"
+            run_command "kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml"
         else
             run_command "kubectl apply -f https://docs.projectcalico.org/manifests/calico.yaml"
         fi
